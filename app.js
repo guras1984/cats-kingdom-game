@@ -1,12 +1,13 @@
 import {Game,LEVELS,TYPES,adjacent,CHAPTERS} from './engine.js';
 import {piece,crate,rainbow,cat} from './art.js';
+import {bindPuzzlePointer} from './pointer.js';
 const $=s=>document.querySelector(s),board=$('#board'),modal=$('#modal');
 const names=['첫 번째 인사','생선 인형 선물','방울 소리 산책','작은 발자국','정원의 오후','골목의 상자','꼭꼭 숨은 발자국','보랏빛 선물','상자 사이로','골목 대청소','간식이 도착했어요','풀어주세요!','장난감 보물찾기','창고의 지름길','달콤한 배달','궁전의 흔적','왕실 장난감','별빛 배달부','대청소의 날','왕국의 축제'];
 const messages=['같은 장난감 3개를 나란히 맞춰주세요.','상자 바로 옆에서 맞추면 상자가 열려요.','간식 꾸러미를 맨 아래까지 내려주세요.','특수 조각을 합쳐 큰 효과를 만들어봐요.'];
 const descriptions=['포근한 햇살 아래,<br>첫 번째 모험이 시작돼요.','상자가 가득한 골목,<br>숨어 있는 선물을 찾아봐요.','달콤한 간식 창고에서<br>왕국의 배달을 도와주세요.','반짝이는 별빛 아래,<br>궁전의 축제를 준비해요.'];
 let progress;try{progress=JSON.parse(localStorage.getItem('cats-kingdom-v1')||'{}');}catch{progress={};}
 progress={unlocked:1,stars:{},best:{},...progress};progress.unlocked=Math.max(1,Math.min(20,Number(progress.unlocked)||1));if(!progress.stars||typeof progress.stars!=='object')progress.stars={};if(!progress.best||typeof progress.best!=='object')progress.best={};
-let game,busy=false,selected=null,hammer=false,sound=false,audio,drag=null,toastTimer;
+let game,busy=false,selected=null,hammer=false,sound=false,audio,toastTimer;
 $('#catArt').innerHTML=cat();
 function save(){try{localStorage.setItem('cats-kingdom-v1',JSON.stringify(progress));}catch{$('.save-note').textContent='브라우저 저장이 제한되어 이번 진행을 저장할 수 없어요.';}}
 function toast(text){$('#status').textContent=text;clearTimeout(toastTimer);toastTimer=setTimeout(()=>{$('#status').textContent='장난감 두 개를 차례로 누르거나 밀어서 바꿔보세요.';},5000);}
@@ -14,19 +15,31 @@ function beep(combo=1){if(!sound)return;try{audio??=new(window.AudioContext||win
 function goalIcon(g){return g.type==='collect'?piece(g.icon):g.type==='crates'?crate(1):g.type==='drops'?piece(-1):'<span class="goal-icon" style="color:#b99ac7">✿</span>';}
 function render(hit=[]){$('#stageNum').textContent=String(game.level.id).padStart(2,'0');$('#stageTitle').textContent=names[game.level.id-1];$('#moves').textContent=game.moves;$('.moves').classList.toggle('low',game.moves<=5);$('#score').textContent=game.score.toLocaleString('ko-KR');$('#scoreFill').style.width=Math.min(100,game.score/180)+'%';
  $('#goals').innerHTML=game.goals().map(g=>`<div class="goal ${g.left===0?'done':''}">${goalIcon(g)}<div><small>${g.label}</small><b>${g.left===0?'✓':g.left}</b></div></div>`).join('');
- board.innerHTML=game.board.map((p,i)=>{const c=game.crates[i];let cls=['tile',selected===i?'selected':'',game.jelly[i]?'jelly':'',game.jelly[i]>1?'double':'',c?'crate':'',game.rope[i]?'rope':'',p?.s?'special-'+p.s:'',hit.includes(i)?'clearing':''].join(' ');const s=p?.s;const label=c?`${c}겹 상자`:p?.t===-1?'간식 꾸러미':p?`${TYPES[p.t]}${s?' '+({row:'가로 줄무늬',col:'세로 줄무늬',bomb:'깜짝 상자',rainbow:'무지개 방울'}[s]):''}`:'빈칸';return `<button class="${cls}" data-cell="${i}" data-type="${p?.t??''}" data-special="${s||''}" aria-label="${(i/8|0)+1}행 ${i%8+1}열 ${label}${game.jelly[i]?' 발자국 '+game.jelly[i]+'겹':''}${game.rope[i]?' 묶임':''}" ${busy?'aria-disabled="true"':''}>${c?crate(c):p?s==='rainbow'?rainbow():piece(p.t):''}${s&&s!=='rainbow'?`<span class="special-badge">${s==='bomb'?'✦':s==='row'?'↔':'↕'}</span>`:''}</button>`;}).join('');
+ board.innerHTML=game.board.map((p,i)=>{const c=game.crates[i];let cls=['tile',selected===i?'selected':'',game.jelly[i]?'jelly':'',game.jelly[i]>1?'double':'',c?'crate':'',game.rope[i]?'rope':'',p?.s?'special-'+p.s:'',hit.includes(i)?'clearing':''].join(' ');const s=p?.s;const label=c?`${c}겹 상자`:p?.t===-1?'간식 꾸러미':p?`${TYPES[p.t]}${s?' '+({row:'가로 줄무늬',col:'세로 줄무늬',bomb:'깜짝 상자',rainbow:'무지개 방울'}[s]):''}`:'빈칸';return `<button class="${cls}" data-cell="${i}" data-type="${p?.t??''}" data-special="${s||''}" aria-label="${(i/8|0)+1}행 ${i%8+1}열 ${label}${game.jelly[i]?' 발자국 '+game.jelly[i]+'겹':''}${game.rope[i]?' 묶임':''}" ${busy?'aria-disabled="true"':''}><span class="piece-motion">${c?crate(c):p?s==='rainbow'?rainbow():piece(p.t):''}${s&&s!=='rainbow'?`<span class="special-badge">${s==='bomb'?'✦':s==='row'?'↔':'↕'}</span>`:''}</span></button>`;}).join('');
  board.classList.toggle('hammer-mode',hammer);for(const type of ['hammer','shuffle','moves']){const left=({hammer:2,shuffle:1,moves:1}[type])-game.used[type];$(`#${type}Count`).textContent=left;const b=$(`[data-booster="${type}"]`);b.disabled=busy||left<=0||game.won()||game.moves<=0;b.classList.toggle('active',type==='hammer'&&hammer);}
- for(const id of ['restartBtn','mapBtn','levelsBtn','hintBtn'])$('#'+id).disabled=busy;
+ for(const id of ['restartBtn','mapBtn','levelsBtn','hintBtn','helpBtn','specialHelp'])$('#'+id).disabled=busy;
  const done=Object.keys(progress.stars).length;$('#journeyCount').innerHTML=`${done} <small>/ 20</small>`;$('#journeyBar').style.width=(done/20*100)+'%';
 }
 function start(id,showIntro=false){if(busy)return;selected=null;hammer=false;game=new Game(LEVELS[id-1]);const chapter=Math.floor((id-1)/5);$('#chapterNo').textContent='CHAPTER '+String(chapter+1).padStart(2,'0');$('#chapterName').textContent=CHAPTERS[chapter];$('#chapterDesc').innerHTML=descriptions[chapter];$('#catMessage').textContent=messages[chapter];document.querySelectorAll('.chapter-dots i').forEach((d,i)=>d.classList.toggle('active',i===chapter));const goal=game.goals().map(g=>`${g.label} ${g.left}${g.type==='jelly'?'겹':'개'}`).join(' · ');$('#stageHint').textContent=goal+' 목표를 달성하세요.';render();toast(id===1?'같은 조각 3개를 맞춰 털실 18개를 모아보세요.':'목표를 모두 달성하면 다음 스테이지가 열려요.');if(modal.open)modal.close();if(showIntro)intro();}
 const delay=ms=>new Promise(r=>setTimeout(r,matchMedia('(prefers-reduced-motion: reduce)').matches?10:ms));
 async function frame(kind,hit=[]){render(hit);if(kind==='clear'){beep(game.combo);if(game.combo>=2){const el=$('#combo');el.textContent=game.combo>=4?'Purr-fect!':`${game.combo} COMBO!`;el.classList.remove('show');void el.offsetWidth;el.classList.add('show');}}await delay(kind==='clear'?240:kind==='fall'?180:110);}
-async function exchange(a,b){if(busy)return;selected=null;hammer=false;if(!game.legal(a,b)){render();toast('같은 장난감이 3개 이상 이어지는 자리로 바꿔주세요.');return;}busy=true;try{await game.play(a,b,frame);}finally{busy=false;render();}if(game.events.length)toast(game.events.at(-1));finish();}
+async function exchange(a,b,visualReady=false){if(busy||game.moves<=0||game.won())return;selected=null;hammer=false;if(!game.legal(a,b)){render();toast('같은 장난감이 3개 이상 이어지는 자리로 바꿔주세요.');return;}busy=true;try{if(!visualReady)await pointer.animateSwap(a,b);await game.play(a,b,frame);}finally{busy=false;render();}if(game.events.length)toast(game.events.at(-1));finish();}
 async function pick(i){if(busy||game.moves<=0||game.won())return;if(hammer){busy=true;hammer=false;try{await game.booster('hammer',i,frame);}finally{busy=false;render();}finish();return;}if(game.crates[i]||game.rope[i]){toast(game.crates[i]?'상자 옆에서 맞추거나 특수 조각으로 상자를 열어주세요.':'묶인 조각을 포함해 매치하면 끈이 풀려요.');return;}if(selected===i){selected=null;render();return;}if(selected!==null&&adjacent(selected,i)){await exchange(selected,i);return;}selected=i;render();}
-board.addEventListener('pointerdown',e=>{if(busy)return;const tile=e.target.closest('[data-cell]');if(tile)drag={i:Number(tile.dataset.cell),x:e.clientX,y:e.clientY};});
-window.addEventListener('pointerup',e=>{if(!drag)return;const d=drag;drag=null;if(busy)return;const dx=e.clientX-d.x,dy=e.clientY-d.y;if(Math.hypot(dx,dy)>18){const to=d.i+(Math.abs(dx)>Math.abs(dy)?Math.sign(dx):Math.sign(dy)*8);if(to>=0&&to<64&&adjacent(d.i,to))exchange(d.i,to);}else if(e.target.closest?.('[data-cell]'))pick(d.i);});
-board.addEventListener('pointercancel',()=>drag=null);board.addEventListener('click',e=>{if(e.detail===0){const tile=e.target.closest('[data-cell]');if(tile)pick(Number(tile.dataset.cell));}});
+const pointer=bindPuzzlePointer(board, {
+ blocked:()=>busy||modal.open||game.moves<=0||game.won(),
+ canMove:i=>!hammer&&!game.crates[i]&&!game.rope[i]&&Boolean(game.board[i]),
+ canSwap:(a,b)=>game.legal(a,b),
+ onGesture:active=>{
+   busy=active;
+   if(!active){render();return;}
+   for(const id of ['restartBtn','mapBtn','levelsBtn','hintBtn','helpBtn','specialHelp'])$('#'+id).disabled=true;
+   document.querySelectorAll('[data-booster]').forEach(b=>b.disabled=true);
+ },
+ onTap:pick,
+ onSwap:exchange,
+ onInvalid:()=>toast('같은 장난감이 3개 이상 이어져야 바뀌어요. 이동 횟수는 줄지 않았어요.')
+});
+board.addEventListener('click',e=>{if(e.detail===0){const tile=e.target.closest('[data-cell]');if(tile)pick(Number(tile.dataset.cell));}});
 board.addEventListener('keydown',e=>{const i=Number(e.target.dataset.cell);if(!Number.isInteger(i))return;const d={ArrowRight:1,ArrowLeft:-1,ArrowDown:8,ArrowUp:-8}[e.key];if(!d)return;e.preventDefault();const j=i+d;if(j>=0&&j<64&&adjacent(i,j))board.querySelector(`[data-cell="${j}"]`)?.focus();});
 function open(html){$('#modalBody').innerHTML=html;if(!modal.open)modal.showModal();}
 $('#closeModal').onclick=()=>modal.close();modal.addEventListener('click',e=>{if(e.target===modal){const r=modal.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)modal.close();}});
